@@ -1,8 +1,11 @@
 # agent-hooks-ipc
-## TODO
-- [ ] Claude Code适配
-- [ ] Codex适配
 
+基于本地命名管道的 IPC 通信框架，用于 Agent 与服务端之间的 JSON 请求/响应交互。
+
+## TODO
+
+- [ ] Claude Code 适配
+- [ ] Codex 适配
 
 ## 快速开始
 
@@ -25,10 +28,17 @@ cargo run --bin client -- claude < src/xxx.json
 ```
 
 ### 响应格式
-根据不同agent, stdout略有不同
+
+根据不同 agent，`stdout` 内容略有不同：
+
 ```json
-{"status": "ok/timeout/error", "stdout": <任意 JSON>}
+{"status": "ok", "stdout": <任意 JSON>}
 ```
+
+## 日志
+
+每次请求会自动将 stdin 原始内容保存到 `logs/` 目录，文件名为时间戳（毫秒）。
+
 ## 测试
 
 ```bash

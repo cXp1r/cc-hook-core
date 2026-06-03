@@ -6,18 +6,19 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use std::env;
 use std::io::{self, Read};
 
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
 
     let action = env::args()
         .nth(1)
-        .expect("Usage: client <action>\nExample: client claude");
+        .unwrap_or("claude".into());
 
 
     let mut stdin_input = String::new();
     io::stdin().read_to_string(&mut stdin_input)?;
 
-
+    // 解析 stdin JSON，提取 hook_event_name 作为日志文件名
     let payload: serde_json::Value = serde_json::from_str(&stdin_input)
         .expect("stdin must be valid JSON");
 
@@ -49,49 +50,56 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    //测试用的json目前是ai乱写的
     use super::*;
     use std::path::Path;
     use std::fs;
-    use std::process::{Command, Stdio};
-    use std::thread;
-    use std::time::Duration;
-    use std::io::Write;
 
-    #[test]
-    fn test_client_with_default_json() {
-        let json_path = Path::new("xxx.json");
-        assert!(
-            json_path.exists(),
-            "xxx.json not found — place it in the same folder"
-        );
-        let mut server = Command::new("cargo")
-            .args(["run", "--bin", "server"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("Failed to start server");
-        thread::sleep(Duration::from_millis(500));
-        let json_content = fs::read_to_string(json_path)
-            .expect("Failed to read x.json");
-        let mut client = Command::new("cargo")
-            .args(["run", "--bin", "client", "--", "claude"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("Failed to start client");
+    #[tokio::test]
+    async fn test_ipc_direct() {
+        let eg_dir = Path::new("src/eg");
+        let mut json_files: Vec<_> = fs::read_dir(eg_dir)
+            .expect("Failed to read src/eg directory")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+            .collect();
+        json_files.sort_by_key(|e| e.file_name());
 
-        if let Some(stdin) = client.stdin.as_mut() {
-            stdin.write_all(json_content.as_bytes()).unwrap();
-        }
-        let output = client.wait_with_output().expect("Client failed");
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let names: Vec<String> = json_files
+            .iter()
+            .map(|e| e.path().file_stem().unwrap().to_string_lossy().into_owned())
+            .collect();
 
-        println!("Client output:\n{}", stdout);
-        server.kill().ok();
-        let response: serde_json::Value = serde_json::from_str(&stdout)
-            .expect("Response should be valid JSON");
+        let selection = dialoguer::Select::new()
+            .with_prompt("选择一个 hook event 作为 payload")
+            .items(&names)
+            .default(0)
+            .interact()
+            .expect("Failed to get selection");
+
+        let json_content = fs::read_to_string(json_files[selection].path())
+            .expect("Failed to read selected JSON");
+
+        println!("选择了: {}", names[selection]);
+
+        let payload: serde_json::Value = serde_json::from_str(&json_content).unwrap();
+        let message = serde_json::json!({
+            "action": "claude",
+            "payload": payload,
+        });
+
+        let name = "灯灯侑侑天下第一".to_ns_name::<GenericNamespaced>().unwrap();
+        let conn = LocalSocketStream::connect(name).await.unwrap();
+        let mut conn = BufReader::new(conn);
+
+        let mut json_str = serde_json::to_string(&message).unwrap();
+        json_str.push('\n');
+        conn.get_mut().write_all(json_str.as_bytes()).await.unwrap();
+
+        let mut response_line = String::new();
+        conn.read_line(&mut response_line).await.unwrap();
+
+        let response: serde_json::Value = serde_json::from_str(&response_line).unwrap();
+        println!("Response: {}", serde_json::to_string_pretty(&response).unwrap());
 
         assert_eq!(response["status"], "ok", "Expected status ok");
     }
