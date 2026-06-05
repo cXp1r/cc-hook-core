@@ -4,7 +4,9 @@ use interprocess::local_socket::{
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use std::env;
+use std::fs;
 use std::io::{self, Read};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 
 #[tokio::main]
@@ -15,8 +17,27 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or("claude".into());
 
 
+
     let mut stdin_input = String::new();
     io::stdin().read_to_string(&mut stdin_input)?;
+
+    // 将 stdin 写入 exe 同级目录下的 log 目录
+    {
+        let exe_dir = env::current_exe()?
+            .parent()
+            .expect("exe has parent dir")
+            .to_path_buf();
+        let log_dir = exe_dir.join("log");
+        fs::create_dir_all(&log_dir)?;
+
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_millis();
+        let log_file = log_dir.join(format!("{}.json", ts));
+        fs::write(&log_file, stdin_input.as_bytes())?;
+        eprintln!("[cc-hook] stdin logged to {}", log_file.display());
+    }
 
     // 解析 stdin JSON，提取 hook_event_name 作为日志文件名
     let payload: serde_json::Value = serde_json::from_str(&stdin_input)
@@ -24,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
 
 
     let message = serde_json::json!({
-        "action": action,
+        "name": action,
         "payload": payload,
     });
 
@@ -43,7 +64,18 @@ async fn main() -> anyhow::Result<()> {
     conn.read_line(&mut response_line).await?;
 
     let response: serde_json::Value = serde_json::from_str(&response_line)?;
-    println!("{}", serde_json::to_string_pretty(&response)?);
+
+    if response["status"] == "ok" {
+        let result = &response["result"];
+        // 只有当 result 不是空对象时才输出
+        if !result.is_null() && !result.as_object().map_or(false, |m| m.is_empty()) {
+            println!("{}", serde_json::to_string(result)?);
+        } else {
+            eprintln!("[cc-hook] empty result, skipping stdout");
+        }
+    } else {
+        eprintln!("[cc-hook] status not ok: {}", response["status"]);
+    }
 
     Ok(())
 }
@@ -83,7 +115,7 @@ mod tests {
 
         let payload: serde_json::Value = serde_json::from_str(&json_content).unwrap();
         let message = serde_json::json!({
-            "action": "claude",
+            "name": "claude",
             "payload": payload,
         });
 
@@ -102,5 +134,55 @@ mod tests {
         println!("Response: {}", serde_json::to_string_pretty(&response).unwrap());
 
         assert_eq!(response["status"], "ok", "Expected status ok");
+
+        // 测试 result 输出逻辑
+        let result = &response["result"];
+        if !result.is_null() && !result.as_object().map_or(false, |m| m.is_empty()) {
+            println!("Result to stdout: {}", serde_json::to_string(result).unwrap());
+        } else {
+            println!("Empty result, nothing to stdout");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_result_output_logic() {
+        // 测试空结果
+        let response1 = serde_json::json!({
+            "status": "ok",
+            "uuid": "test-uuid",
+            "result": {}
+        });
+        let result1 = &response1["result"];
+        assert!(result1.as_object().unwrap().is_empty());
+        println!("Test 1 (empty): skip stdout ✓");
+
+        // 测试有内容的结果
+        let response2 = serde_json::json!({
+            "status": "ok",
+            "uuid": "test-uuid",
+            "result": {
+                "continue": true,
+                "suppressOutput": true,
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow"
+                }
+            }
+        });
+        let result2 = &response2["result"];
+        assert!(!result2.as_object().unwrap().is_empty());
+        println!("Test 2 (with content): {}", serde_json::to_string(result2).unwrap());
+
+        // 测试 null 结果
+        let response3 = serde_json::json!({
+            "status": "ok",
+            "uuid": "test-uuid",
+            "result": null
+        });
+        let result3 = &response3["result"];
+        assert!(result3.is_null());
+        println!("Test 3 (null): skip stdout ✓");
+
+        println!("All result output logic tests passed!");
     }
 }
