@@ -1,15 +1,7 @@
 [package]
-name = "agent-hooks-ipc"
+name = "cc-hook-core"
 version = "0.1.0"
 edition = "2021"
-
-[[bin]]
-name = "server"
-path = "src/server.rs"
-
-[[bin]]
-name = "client"
-path = "src/client.rs"
 
 [dependencies]
 interprocess = { version = "2.4.2", features = ["tokio"] }
@@ -17,4 +9,4 @@ tokio = { version = "1.52.3", features = ["full"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 anyhow = "1.0.102"
-dialoguer = "0.11"
+dialoguer = "0.12.0"
