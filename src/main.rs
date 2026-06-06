@@ -11,12 +11,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if env::args()
+        .skip(1)
+        .any(|arg| matches!(arg.as_str(), "--version" | "-V"))
+    {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
 
-    let action = env::args()
-        .nth(1)
-        .unwrap_or("claude".into());
-
-
+    let action = env::args().nth(1).unwrap_or("claude".into());
 
     let mut stdin_input = String::new();
     io::stdin().read_to_string(&mut stdin_input)?;
@@ -39,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("[cc-hook] stdin logged to {}", log_file.display());
     }
 
-    // 解析 stdin JSON，提取 hook_event_name 作为日志文件名
+
     let payload: serde_json::Value = serde_json::from_str(&stdin_input)
         .expect("stdin must be valid JSON");
 
