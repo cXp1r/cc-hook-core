@@ -1,13 +1,12 @@
 use interprocess::local_socket::{
-    GenericNamespaced,
     tokio::prelude::*,
+    GenericNamespaced,
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use std::env;
 use std::fs;
 use std::io::{self, Read};
 use std::time::{SystemTime, UNIX_EPOCH};
-
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -37,15 +36,12 @@ async fn main() -> anyhow::Result<()> {
             .duration_since(UNIX_EPOCH)
             .expect("time went backwards")
             .as_millis();
-        let log_file = log_dir.join(format!("{}.json", ts));
+        let log_file = log_dir.join(format!("stdin{}.json", ts));
         fs::write(&log_file, stdin_input.as_bytes())?;
-        eprintln!("[cc-hook] stdin logged to {}", log_file.display());
     }
-
 
     let payload: serde_json::Value = serde_json::from_str(&stdin_input)
         .expect("stdin must be valid JSON");
-
 
     let message = serde_json::json!({
         "name": action,
@@ -54,14 +50,18 @@ async fn main() -> anyhow::Result<()> {
 
 
     let name = "灯灯侑侑天下第一".to_ns_name::<GenericNamespaced>()?;
-    let conn = LocalSocketStream::connect(name).await?;
+    let conn = match LocalSocketStream::connect(name).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[cc-hook] socket connect failed: {}", e);
+            std::process::exit(0); // 连不上就放行
+        }
+    };
     let mut conn = BufReader::new(conn);
-
 
     let mut json_str = serde_json::to_string(&message)?;
     json_str.push('\n');
     conn.get_mut().write_all(json_str.as_bytes()).await?;
-
 
     let mut response_line = String::new();
     conn.read_line(&mut response_line).await?;
@@ -70,24 +70,34 @@ async fn main() -> anyhow::Result<()> {
 
     if response["status"] == "ok" {
         let result = &response["result"];
-        // 只有当 result 不是空对象时才输出
         if !result.is_null() && !result.as_object().map_or(false, |m| m.is_empty()) {
-            println!("{}", serde_json::to_string(result)?);
-        } else {
-            eprintln!("[cc-hook] empty result, skipping stdout");
-        }
-    } else {
-        eprintln!("[cc-hook] status not ok: {}", response["status"]);
-    }
+            let exe_dir = env::current_exe()?
+                .parent()
+                .expect("exe has parent dir")
+                .to_path_buf();
+            let log_dir = exe_dir.join("log");
+            fs::create_dir_all(&log_dir)?;
 
-    Ok(())
+            let ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_millis();
+            let stdout_json = serde_json::to_string(result)?;
+            let stdout_file = log_dir.join(format!("stdout{}.json", ts));
+            fs::write(&stdout_file, stdout_json.as_bytes())?;
+
+            println!("{}", stdout_json);
+            std::process::exit(0);
+        } 
+    }
+    std::process::exit(1);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
     use std::fs;
+    use std::path::Path;
 
     #[tokio::test]
     async fn test_ipc_direct() {
@@ -114,7 +124,7 @@ mod tests {
         let json_content = fs::read_to_string(json_files[selection].path())
             .expect("Failed to read selected JSON");
 
-        println!("选择了: {}", names[selection]);
+        println!("选择了 {}", names[selection]);
 
         let payload: serde_json::Value = serde_json::from_str(&json_content).unwrap();
         let message = serde_json::json!({
@@ -138,7 +148,6 @@ mod tests {
 
         assert_eq!(response["status"], "ok", "Expected status ok");
 
-        // 测试 result 输出逻辑
         let result = &response["result"];
         if !result.is_null() && !result.as_object().map_or(false, |m| m.is_empty()) {
             println!("Result to stdout: {}", serde_json::to_string(result).unwrap());
@@ -149,7 +158,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_result_output_logic() {
-        // 测试空结果
         let response1 = serde_json::json!({
             "status": "ok",
             "uuid": "test-uuid",
@@ -159,7 +167,6 @@ mod tests {
         assert!(result1.as_object().unwrap().is_empty());
         println!("Test 1 (empty): skip stdout ✓");
 
-        // 测试有内容的结果
         let response2 = serde_json::json!({
             "status": "ok",
             "uuid": "test-uuid",
@@ -176,7 +183,6 @@ mod tests {
         assert!(!result2.as_object().unwrap().is_empty());
         println!("Test 2 (with content): {}", serde_json::to_string(result2).unwrap());
 
-        // 测试 null 结果
         let response3 = serde_json::json!({
             "status": "ok",
             "uuid": "test-uuid",

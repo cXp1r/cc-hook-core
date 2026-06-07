@@ -1,4 +1,4 @@
-# agent-hooks-ipc
+# cc-hook-core
 
 基于本地命名管道的 IPC 通信框架，用于 Agent 与服务端之间的 JSON 请求/响应交互。
 
@@ -37,7 +37,7 @@ cargo run --bin client -- claude < src/xxx.json
 
 ## 日志
 
-每次请求会自动将 stdin 原始内容保存到 `logs/` 目录，文件名为时间戳（毫秒）。
+每次请求会自动将 stdin 原始内容保存到 `logs/` 目录；当响应 `status` 为 `ok` 且有可输出内容时，也会把要输出到 stdout 的内容保存一份，文件名都使用时间戳（毫秒）。
 
 ## 测试
 
