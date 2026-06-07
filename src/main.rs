@@ -69,7 +69,9 @@ async fn main() -> anyhow::Result<()> {
     let response: serde_json::Value = serde_json::from_str(&response_line)?;
 
     if response["status"] == "ok" {
-        let result = &response["result"];
+        let mut result = response["result"].clone();
+        strip_null_keys(&mut result);
+
         if !result.is_null() && !result.as_object().map_or(false, |m| m.is_empty()) {
             let exe_dir = env::current_exe()?
                 .parent()
@@ -82,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
                 .duration_since(UNIX_EPOCH)
                 .expect("time went backwards")
                 .as_millis();
-            let stdout_json = serde_json::to_string(result)?;
+            let stdout_json = serde_json::to_string(&result)?;
             let stdout_file = log_dir.join(format!("stdout{}.json", ts));
             fs::write(&stdout_file, stdout_json.as_bytes())?;
 
@@ -91,6 +93,23 @@ async fn main() -> anyhow::Result<()> {
         } 
     }
     std::process::exit(1);
+}
+
+fn strip_null_keys(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.retain(|_, v| !v.is_null());
+            for v in map.values_mut() {
+                strip_null_keys(v);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strip_null_keys(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
